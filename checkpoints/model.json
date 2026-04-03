@@ -1,0 +1,7 @@
+{
+  "checkpoint": "/Users/michaeln/Documents/Engineering Project/waste_classifier/checkpoints/model.pt",
+  "best_val_acc": 0.9573333333333334,
+  "num_train": 12750,
+  "num_val": 2250,
+  "img_size": 224
+}
