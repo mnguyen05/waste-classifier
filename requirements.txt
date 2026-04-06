@@ -2,3 +2,7 @@ torch>=2.0.0
 torchvision>=0.15.0
 Pillow>=9.0.0
 tqdm>=4.65.0
+fastapi>=0.100.0
+uvicorn[standard]>=0.22.0
+python-multipart>=0.0.6
+requests>=2.28.0

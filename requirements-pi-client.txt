@@ -1,0 +1,4 @@
+# Camera Pi only: upload frames to server.py (no PyTorch on this device)
+# Also: sudo apt install -y python3-picamera2
+requests>=2.28.0
+Pillow>=9.0.0

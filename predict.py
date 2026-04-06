@@ -23,13 +23,8 @@ def load_checkpoint(path: Path, device: torch.device):
     return model.to(device), ckpt
 
 
-def predict_image(
-    model: torch.nn.Module,
-    image_path: Path,
-    device: torch.device,
-    img_size: int,
-) -> tuple[str, float, list[float]]:
-    tf = transforms.Compose(
+def build_eval_transform(img_size: int) -> transforms.Compose:
+    return transforms.Compose(
         [
             transforms.Resize((img_size, img_size)),
             transforms.ToTensor(),
@@ -38,13 +33,32 @@ def predict_image(
             ),
         ]
     )
-    img = Image.open(image_path).convert("RGB")
-    x = tf(img).unsqueeze(0).to(device)
+
+
+def classify_pil(
+    model: torch.nn.Module,
+    pil_image: Image.Image,
+    device: torch.device,
+    img_size: int,
+) -> tuple[str, float, list[float]]:
+    """Run inference on an RGB PIL image (e.g. from camera or upload)."""
+    tf = build_eval_transform(img_size)
+    x = tf(pil_image.convert("RGB")).unsqueeze(0).to(device)
     with torch.no_grad():
         logits = model(x)
         probs = torch.softmax(logits, dim=1).cpu().numpy()[0]
     idx = int(probs.argmax())
     return CLASS_NAMES[idx], float(probs[idx]), [float(p) for p in probs]
+
+
+def predict_image(
+    model: torch.nn.Module,
+    image_path: Path,
+    device: torch.device,
+    img_size: int,
+) -> tuple[str, float, list[float]]:
+    img = Image.open(image_path).convert("RGB")
+    return classify_pil(model, img, device, img_size)
 
 
 def main() -> None:
