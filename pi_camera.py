@@ -13,9 +13,11 @@ Install camera stack on the Pi:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import io
 import json
 import time
+from datetime import datetime
 from pathlib import Path
 
 from PIL import Image
@@ -51,17 +53,29 @@ def upload_and_predict(server_url: str, image: Image.Image, timeout: float) -> d
     url = server_url.rstrip("/") + "/predict"
     buf = io.BytesIO()
     image.save(buf, format="JPEG", quality=92)
-    buf.seek(0)
+    image_bytes = buf.getvalue()
+    image_sha256 = hashlib.sha256(image_bytes).hexdigest()
     r = requests.post(
         url,
-        files={"file": ("frame.jpg", buf, "image/jpeg")},
+        files={"file": ("frame.jpg", image_bytes, "image/jpeg")},
         timeout=timeout,
     )
     r.raise_for_status()
-    return r.json()
+    payload = r.json()
+    server_hash = payload.get("image_sha256")
+    if not server_hash:
+        raise RuntimeError("Server response missing image_sha256")
+    if server_hash != image_sha256:
+        raise RuntimeError(
+            "Server hash mismatch: captured image was not the one inferred"
+        )
+    payload["client_image_sha256"] = image_sha256
+    payload["verified_image_match"] = True
+    return payload
 
 
 def main() -> None:
+    base_dir = Path(__file__).resolve().parent
     ap = argparse.ArgumentParser(
         description="Pi camera → upload to server OR classify locally"
     )
@@ -80,29 +94,52 @@ def main() -> None:
         help="Used only for local inference (no --server)",
     )
     ap.add_argument(
-        "--output",
+        "--captures-dir",
         type=Path,
-        default=None,
-        help="Save captured frame to this path",
+        default=base_dir / "captures",
+        help="Directory to automatically save captured photos",
     )
     ap.add_argument("--warmup", type=float, default=0.8)
+    ap.add_argument(
+        "--capture-only",
+        action="store_true",
+        help="Capture/save one photo and exit immediately (skip upload/inference)",
+    )
     ap.add_argument(
         "--timeout",
         type=float,
         default=120.0,
         help="HTTP timeout (seconds) when using --server",
     )
+    ap.add_argument(
+        "--results-dir",
+        type=Path,
+        default=base_dir / "results",
+        help="Directory to automatically save prediction JSON files",
+    )
     args = ap.parse_args()
 
-    im = capture_frame(args.warmup)
+    # One-shot mode: capture once, infer once, save artifacts, then exit.
+    args.captures_dir.mkdir(parents=True, exist_ok=True)
+    args.results_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    image_path = args.captures_dir / f"{stamp}.jpg"
+    json_path = args.results_dir / f"{stamp}.json"
 
-    if args.output:
-        im.save(args.output)
-        print(f"Saved frame to {args.output}")
+    im = capture_frame(args.warmup)
+    im.save(image_path, format="JPEG", quality=92)
+    print(f"Saved frame to {image_path.resolve()}", flush=True)
+
+    if args.capture_only:
+        print("Capture-only mode complete.", flush=True)
+        return
 
     if args.server:
         result = upload_and_predict(args.server, im, args.timeout)
-        print(json.dumps(result, indent=2))
+        text = json.dumps(result, indent=2)
+        print(text)
+        json_path.write_text(text + "\n", encoding="utf-8")
+        print(f"Saved JSON to {json_path.resolve()}", flush=True)
         return
 
     from predict import classify_pil, load_checkpoint
@@ -122,6 +159,16 @@ def main() -> None:
     print(f"Prediction: {label} ({conf:.1%} confidence)")
     for name, p in zip(CLASS_NAMES, probs):
         print(f"  {name}: {p:.1%}")
+
+    payload = {
+        "label": label,
+        "confidence": conf,
+        "trash_probability": probs[0],
+        "recycling_probability": probs[1],
+        "decision": label,
+    }
+    json_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    print(f"Saved JSON to {json_path.resolve()}", flush=True)
 
 
 if __name__ == "__main__":

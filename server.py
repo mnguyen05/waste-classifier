@@ -10,7 +10,9 @@ on-device client; the flapper can use `decision` / `label` in the response.
 
 from __future__ import annotations
 
+import hashlib
 import io
+from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -53,6 +55,8 @@ class PredictResponse(BaseModel):
     trash_probability: float
     recycling_probability: float
     decision: str
+    image_sha256: str
+    inferred_at_utc: str
 
 
 @app.get("/health")
@@ -76,10 +80,20 @@ async def predict(file: UploadFile = File(...)):
     device = _state["device"]
     img_size = _state["img_size"]
     label, conf, probs = classify_pil(model, pil, device, img_size)
+    image_sha256 = hashlib.sha256(raw).hexdigest()
+    inferred_at_utc = datetime.now(timezone.utc).isoformat()
+    # Shows in the Mac/uvicorn terminal (Pi client still receives JSON in its own terminal)
+    print(
+        f"[predict] sha256={image_sha256[:12]}... decision={label!r} "
+        f"confidence={conf:.1%} trash={probs[0]:.1%} recycling={probs[1]:.1%}",
+        flush=True,
+    )
     return PredictResponse(
         label=label,
         confidence=conf,
         trash_probability=probs[0],
         recycling_probability=probs[1],
         decision=label,
+        image_sha256=image_sha256,
+        inferred_at_utc=inferred_at_utc,
     )
