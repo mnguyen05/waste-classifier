@@ -58,9 +58,7 @@ python3 pi_camera.py --ir-loop --server http://192.168.1.50:8000 --gpio-pin 24 \
   --sort-hook my_seesaw:apply_sort_decision
 ```
 
-Your function receives one argument: the **prediction dict** (`decision`, `label`, `confidence`, probabilities, etc.).
-
-For the bundled seesaw sketch (AngularServo on BCM 18 and 13), see **`pi_seesaw_servos.py`** and pass `--sort-hook pi_seesaw_servos:apply_sort_decision`. The model emits **`recycling`**; that file maps it to your **`recycle`** tilt logic.
+Your function receives one argument: the **prediction dict** (`decision`, `label`, `confidence`, probabilities, etc.). For a two-servo seesaw, see **`seesaw_servos.py`** and run with `--sort-hook seesaw_servos:apply_sort_decision`.
 
 ## Raspberry Pi camera → middleman server (recommended for your project)
 
