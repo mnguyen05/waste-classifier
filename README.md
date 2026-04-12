@@ -49,8 +49,6 @@ Default `--ir-polarity low` matches common FC-51-style sensors (D0 **LOW** when 
 
 **IR LED on the board lights up but `[IR] triggered` never appears:** the onboard LED only shows the analog circuit; the Pi must read the **digital pin (often labeled D0, not A0)** wired to the BCM pin you pass as `--gpio-pin`. Run `python3 pi_camera.py --gpio-monitor --gpio-pin 17` and block the beam — you should see `is_pressed` flip; if not, fix wiring or try `--ir-polarity high`.
 
-**IR works but no `[run] Photo saved`:** `--ir-loop` keeps **one** Picamera2 open between triggers (repeated open/close often breaks libcamera). After each run, **clear the IR beam** — the script waits for `wait_for_inactive` before the next trigger; if the object stays blocking, it looks “stuck”. Watch for `[IR] waiting for sensor to clear…`.
-
 Flow: **IR GPIO → frame → POST /predict (Mac) → label JSON** → your actuator can read `decision` from saved `results/*.json` or you extend the script.
 
 **Actuator on the Pi (seesaw / servos):** The Mac does not push back to the Pi — the Pi’s `requests.post` **response body already is** the result. Call your code right after that by passing **`--sort-hook MODULE:FUNCTION`**. Example: copy `sort_hook_example.py` to `my_seesaw.py`, implement the servo functions, then:
@@ -60,7 +58,7 @@ python3 pi_camera.py --ir-loop --server http://192.168.1.50:8000 --gpio-pin 24 \
   --sort-hook my_seesaw:apply_sort_decision
 ```
 
-Your function receives one argument: the **prediction dict** (`decision`, `label`, `confidence`, probabilities, etc.). For a two-servo seesaw, see **`seesaw_servos.py`** and run with `--sort-hook seesaw_servos:apply_sort_decision`. If servos never move: use an external **5V servo supply** + common GND, confirm the command includes **`--sort-hook`**, and on the Pi run **`sudo pigpiod`** (install **`pigpio`**) so PWM is stable; watch for **`[seesaw_servos]`** lines in the Pi terminal after each prediction.
+Your function receives one argument: the **prediction dict** (`decision`, `label`, `confidence`, probabilities, etc.). For a two-servo seesaw, see **`seesaw_servos.py`** and run with `--sort-hook seesaw_servos:apply_sort_decision`.
 
 ## Raspberry Pi camera → middleman server (recommended for your project)
 
