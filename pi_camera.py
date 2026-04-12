@@ -33,6 +33,10 @@ from PIL import Image
 
 from label_mapping import CLASS_NAMES
 
+# Picamera2 instance reused across IR triggers (opening/closing every cycle often fails on Pi).
+_ir_picam2 = None
+_ir_picam2_warmed = False
+
 
 def capture_frame(warmup: float) -> Image.Image:
     try:
@@ -54,6 +58,51 @@ def capture_frame(warmup: float) -> Image.Image:
     picam2.stop()
     picam2.close()
     return Image.fromarray(arr, mode="RGB")
+
+
+def capture_frame_ir_loop(warmup: float) -> Image.Image:
+    """Single Picamera2 instance for --ir-loop (avoids open/close each trigger)."""
+    global _ir_picam2, _ir_picam2_warmed
+    try:
+        from picamera2 import Picamera2
+    except ImportError as e:
+        raise SystemExit(
+            "picamera2 is not available. On Raspberry Pi OS install with:\n"
+            "  sudo apt update && sudo apt install -y python3-picamera2\n"
+        ) from e
+
+    if _ir_picam2 is None:
+        print("[camera] opening Picamera2 (stays open until IR loop exits)...", flush=True)
+        picam2 = Picamera2()
+        cfg = picam2.create_still_configuration(
+            main={"size": (1280, 720), "format": "RGB888"}
+        )
+        picam2.configure(cfg)
+        picam2.start()
+        _ir_picam2 = picam2
+    if not _ir_picam2_warmed:
+        time.sleep(warmup)
+        _ir_picam2_warmed = True
+    else:
+        time.sleep(0.1)
+    arr = _ir_picam2.capture_array("main")
+    print("[camera] frame captured from sensor", flush=True)
+    return Image.fromarray(arr, mode="RGB")
+
+
+def close_ir_loop_camera() -> None:
+    global _ir_picam2, _ir_picam2_warmed
+    if _ir_picam2 is not None:
+        try:
+            _ir_picam2.stop()
+        except Exception:
+            pass
+        try:
+            _ir_picam2.close()
+        except Exception:
+            pass
+        _ir_picam2 = None
+    _ir_picam2_warmed = False
 
 
 def upload_and_predict(server_url: str, image: Image.Image, timeout: float) -> dict:
@@ -131,11 +180,19 @@ def run_once(args: argparse.Namespace) -> None:
     image_path = args.captures_dir / f"{stamp}.jpg"
     json_path = args.results_dir / f"{stamp}.json"
 
-    if getattr(args, "verbose", False):
-        print("[IR] capturing frame...", flush=True)
-    im = capture_frame(args.warmup)
+    use_ir_cam = getattr(args, "ir_loop_reuse_camera", False)
+    print(
+        f"[run] cycle {stamp}  camera_mode={'ir-loop reuse' if use_ir_cam else 'one-shot'}",
+        flush=True,
+    )
+    if getattr(args, "verbose", False) or use_ir_cam:
+        print("[run] capturing from camera...", flush=True)
+    if use_ir_cam:
+        im = capture_frame_ir_loop(args.warmup)
+    else:
+        im = capture_frame(args.warmup)
     im.save(image_path, format="JPEG", quality=92)
-    print(f"Saved frame to {image_path.resolve()}", flush=True)
+    print(f"[run] Photo saved: {image_path.resolve()}", flush=True)
 
     if args.capture_only:
         print("Capture-only mode complete.", flush=True)
@@ -280,6 +337,7 @@ def run_ir_loop(args: argparse.Namespace) -> None:
         ) from e
 
     sensor = _open_ir_sensor(args.gpio_pin, args.ir_polarity, args.ir_debounce)
+    setattr(args, "ir_loop_reuse_camera", True)
 
     print(
         f"IR loop: GPIO BCM {args.gpio_pin}, active when pin is "
@@ -303,12 +361,19 @@ def run_ir_loop(args: argparse.Namespace) -> None:
             except Exception as ex:
                 print(f"[IR] cycle error: {ex!r}", flush=True)
                 traceback.print_exc()
+                # Next trigger may need a fresh camera after libcamera/picamera2 errors.
+                close_ir_loop_camera()
+            print(
+                "[IR] waiting for sensor to clear (remove object from beam)…",
+                flush=True,
+            )
             sensor.wait_for_inactive()
             if args.ir_cooldown > 0:
                 time.sleep(args.ir_cooldown)
     except KeyboardInterrupt:
         print("\nIR loop stopped.", flush=True)
     finally:
+        close_ir_loop_camera()
         sensor.close()
 
 
