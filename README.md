@@ -38,9 +38,16 @@ Checkpoint path: `checkpoints/model.pt` (not committed; produced by training).
 
 **Raspberry Pi + Camera Module:** run inference directly on the Pi (see below), or run `server.py` on the Pi and POST images from another process. For a **flapper**, use the printed label or the `/predict` JSON field `decision` to drive GPIO (servo / relay).
 
-**IR trigger (later):** IR breaks → your script calls `pi_camera.py` (or grabs a frame) → classify → pulse the correct flapper position.
+**IR trigger:** With `gpiozero` and the Pi’s GPIO wired to your IR module’s digital output, run a continuous loop that captures on each detection and POSTs to the Mac (same as one-shot):
 
-Flow: **Trigger → frame → PyTorch model → label** → actuator. Optional: **HTTP POST** to the same model if the camera and inference live on different machines.
+```bash
+sudo apt install -y python3-gpiozero
+python3 pi_camera.py --ir-loop --server http://192.168.1.50:8000 --gpio-pin 17
+```
+
+Default `--ir-polarity low` matches common FC-51-style sensors (D0 **LOW** when an object blocks the beam). Use `--ir-polarity high` if your module is wired the other way. Tuning: `--ir-debounce`, `--ir-settle`, `--ir-cooldown`.
+
+Flow: **IR GPIO → frame → POST /predict (Mac) → label JSON** → your actuator can read `decision` from saved `results/*.json` or you extend the script.
 
 ## Raspberry Pi camera → middleman server (recommended for your project)
 
@@ -67,11 +74,7 @@ Put the **heavy model** on a PC or a powerful Pi, and keep the **camera Pi** thi
 
    Use your server’s LAN IP. The Pi JPEGs the frame and `POST`s it to `/predict`; the response is JSON (`label`, `decision`, probabilities) for your flapper logic.
 
-3. Optional: save the frame on the Pi for debugging:
-
-   ```bash
-   python3 pi_camera.py --server http://IP:8000 --output /tmp/last_frame.jpg
-   ```
+3. Captures are saved under `captures/` and server responses under `results/` automatically.
 
 ## Raspberry Pi camera → local model (no server)
 

@@ -5,9 +5,16 @@ Raspberry Pi Camera: capture one frame, then either:
   --server URL   Upload JPEG to your inference server (runs server.py + model there).
   (default)      Run the model on the Pi (needs checkpoints/model.pt on the Pi).
 
+  --ir-loop      Wait on a GPIO IR sensor; each trigger captures one frame and runs
+                 inference (same as one-shot). Requires gpiozero on the Pi.
+
 Install camera stack on the Pi:
 
   sudo apt update && sudo apt install -y python3-picamera2
+
+IR / GPIO (typical FC-51 style: D0 goes LOW when object detected — default polarity):
+
+  sudo apt install -y python3-gpiozero
 """
 
 from __future__ import annotations
@@ -74,55 +81,15 @@ def upload_and_predict(server_url: str, image: Image.Image, timeout: float) -> d
     return payload
 
 
-def main() -> None:
-    base_dir = Path(__file__).resolve().parent
-    ap = argparse.ArgumentParser(
-        description="Pi camera → upload to server OR classify locally"
-    )
-    ap.add_argument(
-        "--server",
-        type=str,
-        default=None,
-        metavar="URL",
-        help="Inference server base URL, e.g. http://192.168.1.50:8000 — uploads "
-        "the frame to POST /predict (no PyTorch needed on the Pi)",
-    )
-    ap.add_argument(
-        "--checkpoint",
-        type=Path,
-        default=Path(__file__).resolve().parent / "checkpoints" / "model.pt",
-        help="Used only for local inference (no --server)",
-    )
-    ap.add_argument(
-        "--captures-dir",
-        type=Path,
-        default=base_dir / "captures",
-        help="Directory to automatically save captured photos",
-    )
-    ap.add_argument("--warmup", type=float, default=0.8)
-    ap.add_argument(
-        "--capture-only",
-        action="store_true",
-        help="Capture/save one photo and exit immediately (skip upload/inference)",
-    )
-    ap.add_argument(
-        "--timeout",
-        type=float,
-        default=120.0,
-        help="HTTP timeout (seconds) when using --server",
-    )
-    ap.add_argument(
-        "--results-dir",
-        type=Path,
-        default=base_dir / "results",
-        help="Directory to automatically save prediction JSON files",
-    )
-    args = ap.parse_args()
+def _stamp() -> str:
+    return datetime.now().strftime("%Y%m%d_%H%M%S_%f")
 
-    # One-shot mode: capture once, infer once, save artifacts, then exit.
+
+def run_once(args: argparse.Namespace) -> None:
+    """Single capture → save JPEG → upload or local infer (one cycle)."""
     args.captures_dir.mkdir(parents=True, exist_ok=True)
     args.results_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    stamp = _stamp()
     image_path = args.captures_dir / f"{stamp}.jpg"
     json_path = args.results_dir / f"{stamp}.json"
 
@@ -169,6 +136,158 @@ def main() -> None:
     }
     json_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     print(f"Saved JSON to {json_path.resolve()}", flush=True)
+
+
+def run_ir_loop(args: argparse.Namespace) -> None:
+    """Block on GPIO IR sensor; each activation runs run_once (capture + infer)."""
+    if args.capture_only:
+        raise SystemExit("--ir-loop cannot be used with --capture-only")
+
+    if not args.server:
+        if not args.checkpoint.is_file():
+            raise SystemExit(
+                "--ir-loop needs --server URL for Mac inference, or a local "
+                f"checkpoint at {args.checkpoint}"
+            )
+
+    try:
+        from gpiozero import DigitalInputDevice
+    except ImportError as e:
+        raise SystemExit(
+            "gpiozero is required for --ir-loop. On Raspberry Pi OS:\n"
+            "  sudo apt install -y python3-gpiozero\n"
+            "  or: pip install gpiozero"
+        ) from e
+
+    # Most IR obstacle modules: output LOW when object in beam (use polarity=low).
+    active_high = args.ir_polarity == "high"
+    sensor = DigitalInputDevice(
+        args.gpio_pin,
+        pull_up=True,
+        active_high=active_high,
+        bounce_time=args.ir_debounce,
+    )
+
+    print(
+        f"IR loop: GPIO BCM {args.gpio_pin}, active when pin is "
+        f"{'HIGH' if active_high else 'LOW'}, bounce={args.ir_debounce}s, "
+        f"settle={args.ir_settle}s. Ctrl+C to stop.",
+        flush=True,
+    )
+
+    if sensor.is_active:
+        print("[IR] sensor already active — waiting for beam to clear...", flush=True)
+        sensor.wait_for_inactive()
+
+    try:
+        while True:
+            sensor.wait_for_active()
+            print("[IR] triggered", flush=True)
+            if args.ir_settle > 0:
+                time.sleep(args.ir_settle)
+            try:
+                run_once(args)
+            except Exception as ex:
+                print(f"[IR] cycle error: {ex!r}", flush=True)
+            sensor.wait_for_inactive()
+            if args.ir_cooldown > 0:
+                time.sleep(args.ir_cooldown)
+    except KeyboardInterrupt:
+        print("\nIR loop stopped.", flush=True)
+    finally:
+        sensor.close()
+
+
+def main() -> None:
+    base_dir = Path(__file__).resolve().parent
+    ap = argparse.ArgumentParser(
+        description="Pi camera → upload to server OR classify locally"
+    )
+    ap.add_argument(
+        "--server",
+        type=str,
+        default=None,
+        metavar="URL",
+        help="Inference server base URL, e.g. http://192.168.1.50:8000 — uploads "
+        "the frame to POST /predict (no PyTorch needed on the Pi)",
+    )
+    ap.add_argument(
+        "--checkpoint",
+        type=Path,
+        default=Path(__file__).resolve().parent / "checkpoints" / "model.pt",
+        help="Used only for local inference (no --server)",
+    )
+    ap.add_argument(
+        "--captures-dir",
+        type=Path,
+        default=base_dir / "captures",
+        help="Directory to automatically save captured photos",
+    )
+    ap.add_argument("--warmup", type=float, default=0.8)
+    ap.add_argument(
+        "--capture-only",
+        action="store_true",
+        help="Capture/save one photo and exit immediately (skip upload/inference)",
+    )
+    ap.add_argument(
+        "--timeout",
+        type=float,
+        default=120.0,
+        help="HTTP timeout (seconds) when using --server",
+    )
+    ap.add_argument(
+        "--results-dir",
+        type=Path,
+        default=base_dir / "results",
+        help="Directory to automatically save prediction JSON files",
+    )
+    ap.add_argument(
+        "--ir-loop",
+        action="store_true",
+        help="Poll GPIO IR sensor in a loop: each trigger captures and infers "
+        "(needs gpiozero; use with --server for Mac inference)",
+    )
+    ap.add_argument(
+        "--gpio-pin",
+        type=int,
+        default=17,
+        metavar="BCM",
+        help="BCM GPIO number wired to the IR sensor digital output (default: 17)",
+    )
+    ap.add_argument(
+        "--ir-polarity",
+        choices=("low", "high"),
+        default="low",
+        help="Pin voltage when object is present: low=most FC-51 modules (default), high=inverted wiring",
+    )
+    ap.add_argument(
+        "--ir-debounce",
+        type=float,
+        default=0.08,
+        metavar="SEC",
+        help="GPIO debounce time for the IR input (default: 0.08)",
+    )
+    ap.add_argument(
+        "--ir-settle",
+        type=float,
+        default=0.05,
+        metavar="SEC",
+        help="Sleep after IR fires before opening camera (default: 0.05)",
+    )
+    ap.add_argument(
+        "--ir-cooldown",
+        type=float,
+        default=0.3,
+        metavar="SEC",
+        help="Sleep after object clears before accepting next trigger (default: 0.3)",
+    )
+    args = ap.parse_args()
+
+    if args.ir_loop:
+        run_ir_loop(args)
+        return
+
+    run_once(args)
 
 
 if __name__ == "__main__":
