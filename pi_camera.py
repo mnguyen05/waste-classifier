@@ -192,6 +192,39 @@ def _open_ir_sensor(gpio_pin: int, polarity: str, debounce: float) -> _IrEdge:
     return _IrEdge(dev)
 
 
+def run_gpio_monitor(args: argparse.Namespace) -> None:
+    """Print when GPIO sees press/release — use to verify D0→Pi wiring vs board LED."""
+    from gpiozero import Button
+
+    if args.ir_polarity == "low":
+        b = Button(args.gpio_pin, pull_up=True, bounce_time=0.05)
+    else:
+        b = Button(args.gpio_pin, pull_up=False, bounce_time=0.05)
+
+    print(
+        f"GPIO monitor: BCM {args.gpio_pin}, polarity={args.ir_polarity!r}. "
+        "Block the IR beam — is_pressed should flip. Ctrl+C to quit.",
+        flush=True,
+    )
+    print(f"  initial is_pressed={b.is_pressed}", flush=True)
+    prev = b.is_pressed
+    try:
+        while True:
+            cur = b.is_pressed
+            if cur != prev:
+                print(
+                    time.strftime("%H:%M:%S"),
+                    f"  is_pressed={cur}  (GPIO sees {'ACTIVE' if cur else 'idle'})",
+                    flush=True,
+                )
+                prev = cur
+            time.sleep(0.02)
+    except KeyboardInterrupt:
+        print("\nMonitor stopped.", flush=True)
+    finally:
+        b.close()
+
+
 def run_ir_loop(args: argparse.Namespace) -> None:
     """Block on GPIO IR sensor; each activation runs run_once (capture + infer)."""
     if args.capture_only:
@@ -334,7 +367,19 @@ def main() -> None:
         action="store_true",
         help="Extra logging (e.g. each IR cycle start)",
     )
+    ap.add_argument(
+        "--gpio-monitor",
+        action="store_true",
+        help="Print GPIO press/release events (no camera). Use when IR LED works but --ir-loop is silent.",
+    )
     args = ap.parse_args()
+
+    if args.gpio_monitor and args.ir_loop:
+        raise SystemExit("Use either --gpio-monitor or --ir-loop, not both.")
+
+    if args.gpio_monitor:
+        run_gpio_monitor(args)
+        return
 
     if args.ir_loop:
         run_ir_loop(args)

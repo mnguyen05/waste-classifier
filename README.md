@@ -47,6 +47,8 @@ python3 pi_camera.py --ir-loop --server http://192.168.1.50:8000 --gpio-pin 17
 
 Default `--ir-polarity low` matches common FC-51-style sensors (D0 **LOW** when an object blocks the beam). Use `--ir-polarity high` if your module is wired the other way. Tuning: `--ir-debounce`, `--ir-settle`, `--ir-cooldown`.
 
+**IR LED on the board lights up but `[IR] triggered` never appears:** the onboard LED only shows the analog circuit; the Pi must read the **digital pin (often labeled D0, not A0)** wired to the BCM pin you pass as `--gpio-pin`. Run `python3 pi_camera.py --gpio-monitor --gpio-pin 17` and block the beam — you should see `is_pressed` flip; if not, fix wiring or try `--ir-polarity high`.
+
 Flow: **IR GPIO → frame → POST /predict (Mac) → label JSON** → your actuator can read `decision` from saved `results/*.json` or you extend the script.
 
 ## Raspberry Pi camera → middleman server (recommended for your project)
