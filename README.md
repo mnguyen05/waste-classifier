@@ -58,7 +58,7 @@ python3 pi_camera.py --ir-loop --server http://192.168.1.50:8000 --gpio-pin 24 \
   --sort-hook my_seesaw:apply_sort_decision
 ```
 
-Your function receives one argument: the **prediction dict** (`decision`, `label`, `confidence`, probabilities, etc.). For a two-servo seesaw, see **`seesaw_servos.py`** and run with `--sort-hook seesaw_servos:apply_sort_decision`.
+Your function receives one argument: the **prediction dict** (`decision`, `label`, `confidence`, probabilities, etc.). For a two-servo seesaw, see **`seesaw_servos.py`** and run with `--sort-hook seesaw_servos:apply_sort_decision`. If servos never move: use an external **5V servo supply** + common GND, confirm the command includes **`--sort-hook`**, and on the Pi run **`sudo pigpiod`** (install **`pigpio`**) so PWM is stable; watch for **`[seesaw_servos]`** lines in the Pi terminal after each prediction.
 
 ## Raspberry Pi camera → middleman server (recommended for your project)
 
