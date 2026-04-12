@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import inspect
 import io
 import json
 import time
@@ -140,67 +139,38 @@ def run_once(args: argparse.Namespace) -> None:
 
 
 class _IrEdge:
-    """Same wait API for gpiozero DigitalInputDevice (2.x) or Button (1.x active-low)."""
+    """gpiozero Button: active-low (pull_up=True) or active-high (pull_up=False)."""
 
-    def __init__(self, dev, *, is_button: bool) -> None:
-        self._dev = dev
-        self._is_button = is_button
+    def __init__(self, btn) -> None:
+        self._btn = btn
 
     @property
     def is_active(self) -> bool:
-        if self._is_button:
-            return bool(self._dev.is_pressed)
-        return bool(self._dev.is_active)
+        return bool(self._btn.is_pressed)
 
     def wait_for_active(self) -> None:
-        if self._is_button:
-            self._dev.wait_for_press()
-        else:
-            self._dev.wait_for_active()
+        self._btn.wait_for_press()
 
     def wait_for_inactive(self) -> None:
-        if self._is_button:
-            self._dev.wait_for_release()
-        else:
-            self._dev.wait_for_inactive()
+        self._btn.wait_for_release()
 
     def close(self) -> None:
-        self._dev.close()
+        self._btn.close()
 
 
 def _open_ir_sensor(gpio_pin: int, polarity: str, debounce: float) -> _IrEdge:
-    """Support apt's gpiozero 1.x (no active_high) and pip's gpiozero 2.x (active_state)."""
-    from gpiozero import Button, DigitalInputDevice
+    """Use Button only: avoids gpiozero 2 + lgpio PinInvalidState on DigitalInputDevice+pull_up+active_state.
 
-    active_when_high = polarity == "high"
-    sig = inspect.signature(DigitalInputDevice.__init__)
+    low:  pull_up=True  — typical IR module sinks GPIO to GND when object detected.
+    high: pull_up=False — sensor drives GPIO HIGH when active (needs a defined LOW when idle).
+    """
+    from gpiozero import Button
 
-    if "active_state" in sig.parameters:
-        dev = DigitalInputDevice(
-            gpio_pin,
-            pull_up=True,
-            active_state=active_when_high,
-            bounce_time=debounce,
-        )
-        return _IrEdge(dev, is_button=False)
-    if "active_high" in sig.parameters:
-        dev = DigitalInputDevice(
-            gpio_pin,
-            pull_up=True,
-            active_high=active_when_high,
-            bounce_time=debounce,
-        )
-        return _IrEdge(dev, is_button=False)
-
-    if active_when_high:
-        raise SystemExit(
-            '--ir-polarity high needs gpiozero 2.x. On the Pi run:\n'
-            '  pip install "gpiozero>=2"\n'
-            "Or use default --ir-polarity low for typical IR modules (output LOW when object detected)."
-        )
-
-    dev = Button(gpio_pin, pull_up=True, bounce_time=debounce)
-    return _IrEdge(dev, is_button=True)
+    if polarity == "low":
+        dev = Button(gpio_pin, pull_up=True, bounce_time=debounce)
+    else:
+        dev = Button(gpio_pin, pull_up=False, bounce_time=debounce)
+    return _IrEdge(dev)
 
 
 def run_ir_loop(args: argparse.Namespace) -> None:
