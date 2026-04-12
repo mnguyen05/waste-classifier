@@ -24,6 +24,7 @@ import hashlib
 import io
 import json
 import time
+import traceback
 from datetime import datetime
 from pathlib import Path
 
@@ -62,13 +63,29 @@ def upload_and_predict(server_url: str, image: Image.Image, timeout: float) -> d
     image.save(buf, format="JPEG", quality=92)
     image_bytes = buf.getvalue()
     image_sha256 = hashlib.sha256(image_bytes).hexdigest()
-    r = requests.post(
-        url,
-        files={"file": ("frame.jpg", image_bytes, "image/jpeg")},
-        timeout=timeout,
+    print(
+        f"[upload] POST {url}  ({len(image_bytes)} bytes JPEG)",
+        flush=True,
     )
-    r.raise_for_status()
-    payload = r.json()
+    try:
+        r = requests.post(
+            url,
+            files={"file": ("frame.jpg", image_bytes, "image/jpeg")},
+            timeout=timeout,
+        )
+        r.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        extra = ""
+        resp = getattr(e, "response", None)
+        if resp is not None:
+            extra = f" | HTTP {resp.status_code}: {resp.text[:400]!r}"
+        raise RuntimeError(f"Upload failed: {e!s}{extra}") from e
+    try:
+        payload = r.json()
+    except Exception as e:
+        raise RuntimeError(
+            f"Server did not return JSON (first 200 chars): {r.text[:200]!r}"
+        ) from e
     server_hash = payload.get("image_sha256")
     if not server_hash:
         raise RuntimeError("Server response missing image_sha256")
@@ -93,6 +110,8 @@ def run_once(args: argparse.Namespace) -> None:
     image_path = args.captures_dir / f"{stamp}.jpg"
     json_path = args.results_dir / f"{stamp}.json"
 
+    if getattr(args, "verbose", False):
+        print("[IR] capturing frame...", flush=True)
     im = capture_frame(args.warmup)
     im.save(image_path, format="JPEG", quality=92)
     print(f"Saved frame to {image_path.resolve()}", flush=True)
@@ -217,6 +236,7 @@ def run_ir_loop(args: argparse.Namespace) -> None:
                 run_once(args)
             except Exception as ex:
                 print(f"[IR] cycle error: {ex!r}", flush=True)
+                traceback.print_exc()
             sensor.wait_for_inactive()
             if args.ir_cooldown > 0:
                 time.sleep(args.ir_cooldown)
@@ -308,6 +328,11 @@ def main() -> None:
         default=0.3,
         metavar="SEC",
         help="Sleep after object clears before accepting next trigger (default: 0.3)",
+    )
+    ap.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Extra logging (e.g. each IR cycle start)",
     )
     args = ap.parse_args()
 
