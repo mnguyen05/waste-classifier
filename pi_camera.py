@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import inspect
 import io
 import json
 import time
@@ -138,6 +139,70 @@ def run_once(args: argparse.Namespace) -> None:
     print(f"Saved JSON to {json_path.resolve()}", flush=True)
 
 
+class _IrEdge:
+    """Same wait API for gpiozero DigitalInputDevice (2.x) or Button (1.x active-low)."""
+
+    def __init__(self, dev, *, is_button: bool) -> None:
+        self._dev = dev
+        self._is_button = is_button
+
+    @property
+    def is_active(self) -> bool:
+        if self._is_button:
+            return bool(self._dev.is_pressed)
+        return bool(self._dev.is_active)
+
+    def wait_for_active(self) -> None:
+        if self._is_button:
+            self._dev.wait_for_press()
+        else:
+            self._dev.wait_for_active()
+
+    def wait_for_inactive(self) -> None:
+        if self._is_button:
+            self._dev.wait_for_release()
+        else:
+            self._dev.wait_for_inactive()
+
+    def close(self) -> None:
+        self._dev.close()
+
+
+def _open_ir_sensor(gpio_pin: int, polarity: str, debounce: float) -> _IrEdge:
+    """Support apt's gpiozero 1.x (no active_high) and pip's gpiozero 2.x (active_state)."""
+    from gpiozero import Button, DigitalInputDevice
+
+    active_when_high = polarity == "high"
+    sig = inspect.signature(DigitalInputDevice.__init__)
+
+    if "active_state" in sig.parameters:
+        dev = DigitalInputDevice(
+            gpio_pin,
+            pull_up=True,
+            active_state=active_when_high,
+            bounce_time=debounce,
+        )
+        return _IrEdge(dev, is_button=False)
+    if "active_high" in sig.parameters:
+        dev = DigitalInputDevice(
+            gpio_pin,
+            pull_up=True,
+            active_high=active_when_high,
+            bounce_time=debounce,
+        )
+        return _IrEdge(dev, is_button=False)
+
+    if active_when_high:
+        raise SystemExit(
+            '--ir-polarity high needs gpiozero 2.x. On the Pi run:\n'
+            '  pip install "gpiozero>=2"\n'
+            "Or use default --ir-polarity low for typical IR modules (output LOW when object detected)."
+        )
+
+    dev = Button(gpio_pin, pull_up=True, bounce_time=debounce)
+    return _IrEdge(dev, is_button=True)
+
+
 def run_ir_loop(args: argparse.Namespace) -> None:
     """Block on GPIO IR sensor; each activation runs run_once (capture + infer)."""
     if args.capture_only:
@@ -151,7 +216,7 @@ def run_ir_loop(args: argparse.Namespace) -> None:
             )
 
     try:
-        from gpiozero import DigitalInputDevice
+        import gpiozero  # noqa: F401
     except ImportError as e:
         raise SystemExit(
             "gpiozero is required for --ir-loop. On Raspberry Pi OS:\n"
@@ -159,19 +224,12 @@ def run_ir_loop(args: argparse.Namespace) -> None:
             "  or: pip install gpiozero"
         ) from e
 
-    # Most IR obstacle modules: output LOW when object in beam (use polarity=low).
-    active_high = args.ir_polarity == "high"
-    sensor = DigitalInputDevice(
-        args.gpio_pin,
-        pull_up=True,
-        active_high=active_high,
-        bounce_time=args.ir_debounce,
-    )
+    sensor = _open_ir_sensor(args.gpio_pin, args.ir_polarity, args.ir_debounce)
 
     print(
         f"IR loop: GPIO BCM {args.gpio_pin}, active when pin is "
-        f"{'HIGH' if active_high else 'LOW'}, bounce={args.ir_debounce}s, "
-        f"settle={args.ir_settle}s. Ctrl+C to stop.",
+        f"{'HIGH' if args.ir_polarity == 'high' else 'LOW'}, "
+        f"bounce={args.ir_debounce}s, settle={args.ir_settle}s. Ctrl+C to stop.",
         flush=True,
     )
 
