@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib
 import io
 import json
 import time
@@ -102,6 +103,26 @@ def _stamp() -> str:
     return datetime.now().strftime("%Y%m%d_%H%M%S_%f")
 
 
+def invoke_sort_hook(spec: str, payload: dict) -> None:
+    """
+    Call user code after a successful prediction. spec is "module:function".
+    The Pi already has `payload` from the HTTP response (no second network hop).
+    """
+    mod_part, sep, func_part = spec.partition(":")
+    mod_part, func_part = mod_part.strip(), func_part.strip()
+    if not sep or not mod_part or not func_part:
+        raise ValueError(
+            f"Invalid --sort-hook {spec!r}; use MODULE:FUNCTION "
+            "(e.g. my_seesaw:apply_sort_decision). Run from the directory that contains the module or set PYTHONPATH."
+        )
+    mod = importlib.import_module(mod_part)
+    fn = getattr(mod, func_part)
+    if not callable(fn):
+        raise TypeError(f"{spec!r}: {func_part!r} is not callable")
+    print(f"[sort-hook] {spec}(payload)  decision={payload.get('decision')!r}", flush=True)
+    fn(payload)
+
+
 def run_once(args: argparse.Namespace) -> None:
     """Single capture → save JPEG → upload or local infer (one cycle)."""
     args.captures_dir.mkdir(parents=True, exist_ok=True)
@@ -126,6 +147,12 @@ def run_once(args: argparse.Namespace) -> None:
         print(text)
         json_path.write_text(text + "\n", encoding="utf-8")
         print(f"Saved JSON to {json_path.resolve()}", flush=True)
+        if getattr(args, "sort_hook", None):
+            try:
+                invoke_sort_hook(args.sort_hook, result)
+            except Exception as hook_ex:
+                print(f"[sort-hook] error: {hook_ex!r}", flush=True)
+                traceback.print_exc()
         return
 
     from predict import classify_pil, load_checkpoint
@@ -155,6 +182,12 @@ def run_once(args: argparse.Namespace) -> None:
     }
     json_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     print(f"Saved JSON to {json_path.resolve()}", flush=True)
+    if getattr(args, "sort_hook", None):
+        try:
+            invoke_sort_hook(args.sort_hook, payload)
+        except Exception as hook_ex:
+            print(f"[sort-hook] error: {hook_ex!r}", flush=True)
+            traceback.print_exc()
 
 
 class _IrEdge:
@@ -371,6 +404,14 @@ def main() -> None:
         "--gpio-monitor",
         action="store_true",
         help="Print GPIO press/release events (no camera). Use when IR LED works but --ir-loop is silent.",
+    )
+    ap.add_argument(
+        "--sort-hook",
+        type=str,
+        default=None,
+        metavar="MODULE:FUNCTION",
+        help="After each successful inference, call FUNCTION(payload dict). "
+        "Example: my_seesaw:apply_sort_decision — put my_seesaw.py on PYTHONPATH or run from its directory.",
     )
     args = ap.parse_args()
 

@@ -51,6 +51,15 @@ Default `--ir-polarity low` matches common FC-51-style sensors (D0 **LOW** when 
 
 Flow: **IR GPIO → frame → POST /predict (Mac) → label JSON** → your actuator can read `decision` from saved `results/*.json` or you extend the script.
 
+**Actuator on the Pi (seesaw / servos):** The Mac does not push back to the Pi — the Pi’s `requests.post` **response body already is** the result. Call your code right after that by passing **`--sort-hook MODULE:FUNCTION`**. Example: copy `sort_hook_example.py` to `my_seesaw.py`, implement the servo functions, then:
+
+```bash
+python3 pi_camera.py --ir-loop --server http://192.168.1.50:8000 --gpio-pin 24 \
+  --sort-hook my_seesaw:apply_sort_decision
+```
+
+Your function receives one argument: the **prediction dict** (`decision`, `label`, `confidence`, probabilities, etc.).
+
 ## Raspberry Pi camera → middleman server (recommended for your project)
 
 Put the **heavy model** on a PC or a powerful Pi, and keep the **camera Pi** thin:
