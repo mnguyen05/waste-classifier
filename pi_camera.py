@@ -69,12 +69,16 @@ def upload_and_predict(server_url: str, image: Image.Image, timeout: float) -> d
         flush=True,
     )
     try:
-        r = requests.post(
-            url,
-            files={"file": ("frame.jpg", image_bytes, "image/jpeg")},
-            timeout=timeout,
-        )
-        r.raise_for_status()
+        # Force direct LAN connection; avoid proxy env vars (HTTP_PROXY/HTTPS_PROXY)
+        # which can break local Pi -> Mac response handling.
+        with requests.Session() as sess:
+            sess.trust_env = False
+            r = sess.post(
+                url,
+                files={"file": ("frame.jpg", image_bytes, "image/jpeg")},
+                timeout=timeout,
+            )
+            r.raise_for_status()
     except requests.exceptions.RequestException as e:
         extra = ""
         resp = getattr(e, "response", None)
