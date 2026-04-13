@@ -8,7 +8,6 @@ BCM pins: servo1=18, servo2=13 (same as your original script).
 
 from __future__ import annotations
 
-import random
 import time
 
 from gpiozero import AngularServo
@@ -48,25 +47,35 @@ def sort_object(label: str) -> None:
         print("Platform reset.\n", flush=True)
 
 
+def classify_object(payload: dict) -> str:
+    """
+    Map server JSON payload -> internal labels used by sort_object().
+    Server returns "recycling" / "trash"; we map recycling -> recycle.
+    """
+    decision = (payload.get("decision") or payload.get("label") or "").strip().lower()
+    if decision == "recycling":
+        return "recycle"
+    if decision == "trash":
+        return "trash"
+    raise ValueError(f"Unknown decision from server: {decision!r}")
+
+
 def apply_sort_decision(payload: dict) -> None:
     """
     Called by pi_camera.py after the Mac returns JSON (or local inference).
     payload['decision'] / payload['label'] are 'recycling' or 'trash'.
     """
-    decision = (payload.get("decision") or payload.get("label") or "").strip().lower()
-    if decision == "recycling":
-        sort_object("recycle")
-    elif decision == "trash":
-        sort_object("trash")
-    else:
-        print(f"[seesaw_servos] unknown decision: {decision!r}", flush=True)
+    try:
+        label = classify_object(payload)
+    except ValueError as e:
+        print(f"[seesaw_servos] {e}", flush=True)
+        return
+    print(f"Classified as: {label}", flush=True)
+    sort_object(label)
 
 
 def _demo_loop() -> None:
     """Original Enter-to-simulate behavior (optional)."""
-    def classify_object() -> str:
-        return random.choice(["recycle", "trash"])
-
     print("Setting both servos to neutral...", flush=True)
     set_both(0, 0)
     time.sleep(1)
@@ -74,9 +83,13 @@ def _demo_loop() -> None:
     print("System ready.\n", flush=True)
 
     while True:
-        input("Press Enter to simulate dropping an object...")
-        label = classify_object()
-        print(f"Classified as: {label}", flush=True)
+        raw = input("Type recycle or trash (q to quit): ").strip().lower()
+        if raw in {"q", "quit", "exit"}:
+            break
+        if raw not in {"recycle", "trash"}:
+            print("Enter 'recycle' or 'trash'.", flush=True)
+            continue
+        label = raw
         sort_object(label)
 
 
@@ -90,3 +103,4 @@ if __name__ == "__main__":
         time.sleep(0.5)
         detach_both()
         print("Cleanup done.", flush=True)
+
