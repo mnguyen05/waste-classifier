@@ -12,6 +12,9 @@ import time
 
 from gpiozero import AngularServo
 
+# Seconds to hold tilt before returning to neutral (object slide time)
+TILT_HOLD_SEC = 5.0
+
 # ── Servo setup ─────────────────────────────────────────────
 servo1 = AngularServo(18, min_pulse_width=0.0006, max_pulse_width=0.0023)
 servo2 = AngularServo(13, min_pulse_width=0.0006, max_pulse_width=0.0023)
@@ -32,7 +35,7 @@ def sort_object(label: str) -> None:
     if label == "recycle":
         print("Recycling — tilting to recycling bin", flush=True)
         set_both(-30, -55)
-        time.sleep(1.5)
+        time.sleep(TILT_HOLD_SEC)
         set_both(0, 0)
         time.sleep(0.5)
         detach_both()
@@ -40,7 +43,7 @@ def sort_object(label: str) -> None:
     else:
         print("Trash — tilting to trash bin", flush=True)
         set_both(55, 40)
-        time.sleep(1.5)
+        time.sleep(TILT_HOLD_SEC)
         set_both(0, 0)
         time.sleep(0.5)
         detach_both()
